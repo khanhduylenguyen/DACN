@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Calendar, Stethoscope, FileText, Activity, Pill, LayoutDashboard, Menu, X, Search, Bell, UserCircle, LogOut, Video } from "lucide-react";
+import { Calendar, Stethoscope, FileText, Activity, Pill, LayoutDashboard, Menu, X, Search, Bell, UserCircle, LogOut, Video, Users, Clock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { logout, getCurrentUser } from "@/lib/auth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -20,9 +20,14 @@ type Props = { children: React.ReactNode };
 const menu = [
   { title: "Tổng quan", icon: LayoutDashboard, href: "/doctor" },
   { title: "Lịch khám", icon: Calendar, href: "/doctor/appointments" },
+  { title: "Lịch làm việc", icon: Clock, href: "/doctor/schedule" },
+  { title: "Theo dõi bệnh nhân", icon: Bell, href: "/doctor/followup" },
   { title: "Hồ sơ", icon: FileText, href: "/doctor/records" },
   { title: "Kê toa", icon: Pill, href: "/doctor/prescriptions" },
+  { title: "Bệnh nhân gia đình", icon: Users, href: "/doctor/family-patients" },
+  { title: "Phân tích & Báo cáo", icon: Activity, href: "/doctor/analytics" },
   { title: "Thống kê", icon: Activity, href: "/doctor/stats" },
+  { title: "Thông báo", icon: Bell, href: "/doctor/notifications" },
   { title: "Telemedicine", icon: Video, href: "/telemedicine" },
 ];
 

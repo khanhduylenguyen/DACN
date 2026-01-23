@@ -264,7 +264,7 @@ const Book = () => {
     const updatedAppointments = [...appointments, newAppointment];
     saveAppointments(updatedAppointments);
 
-    // Create notification for new appointment
+    // Create notification for patient
     try {
       const NOTIFICATIONS_KEY = "cliniccare:notifications";
       const existing = JSON.parse(localStorage.getItem(NOTIFICATIONS_KEY) || "[]");
@@ -282,6 +282,27 @@ const Book = () => {
       localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify([...existing, notification]));
       window.dispatchEvent(new CustomEvent("notificationsUpdated"));
     } catch {}
+
+    // Create notification for doctor
+    try {
+      const { createDoctorNotification } = require("@/lib/doctor-notifications");
+      createDoctorNotification({
+        doctorId: data.doctorId,
+        type: "appointment_reminder",
+        title: `Lịch hẹn mới - ${patientName}`,
+        message: `Bệnh nhân ${patientName} đã đặt lịch hẹn với bạn vào ${new Date(data.date).toLocaleDateString("vi-VN")} lúc ${data.time} (${data.specialty}). Vui lòng xác nhận lịch hẹn.`,
+        link: "/doctor/appointments",
+        priority: "medium",
+        relatedId: nextId,
+        metadata: {
+          appointmentId: nextId,
+          patientId: user.id,
+          patientName: patientName,
+        },
+      });
+    } catch (error) {
+      console.error("Error creating doctor notification:", error);
+    }
 
     // Trigger storage event for cross-tab sync
     window.dispatchEvent(new Event("storage"));

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { CalendarPlus, ClipboardList, Pill, FileText, LayoutDashboard, Menu, X, Search, Bell, User, CreditCard, Video, Clock, TestTube, Activity, Users } from "lucide-react";
+import { CalendarPlus, ClipboardList, Pill, FileText, LayoutDashboard, Menu, X, Search, Bell, User, CreditCard, Video, Clock, TestTube, Activity, Users, BarChart3 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { logout, getCurrentUser } from "@/lib/auth";
@@ -20,6 +20,7 @@ const menu = [
   { title: "Kết quả xét nghiệm", icon: TestTube, href: "/patient/test-results" },
   { title: "Health Dashboard", icon: Activity, href: "/patient/health" },
   { title: "Quản lý Gia đình", icon: Users, href: "/patient/family" },
+  { title: "Dashboard Gia đình", icon: BarChart3, href: "/patient/family/dashboard" },
   { title: "Thông báo", icon: Bell, href: "/patient/notifications" },
   { title: "Telemedicine", icon: Video, href: "/telemedicine" },
 ];

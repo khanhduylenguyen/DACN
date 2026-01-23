@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -17,7 +17,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Calendar, Mail, Lock, ArrowRight, Eye, EyeOff } from "lucide-react";
-import { authenticate, setCurrentUser, authenticateWithGoogle } from "@/lib/auth";
+import { authenticate, setCurrentUser, authenticateWithGoogle, saveRememberMe, getRememberMe, clearRememberMe } from "@/lib/auth";
 import { toast } from "sonner";
 import heroImage from "@/assets/hero-doctor.jpg";
 
@@ -53,6 +53,16 @@ const Login = () => {
     },
   });
 
+  // Load thông tin đăng nhập đã lưu khi component mount
+  useEffect(() => {
+    const savedIdentifier = getRememberMe();
+    if (savedIdentifier) {
+      form.setValue("emailOrPhone", savedIdentifier);
+      form.setValue("rememberMe", true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const onSubmit = async (data: LoginFormValues) => {
     setIsLoading(true);
     // Simulate API call
@@ -64,6 +74,15 @@ const Login = () => {
         return;
       }
       setCurrentUser(user);
+      
+      // Xử lý ghi nhớ đăng nhập
+      if (data.rememberMe) {
+        // Lưu email/username để tự động điền lần sau
+        saveRememberMe(data.emailOrPhone);
+      } else {
+        // Xóa thông tin đã lưu nếu không chọn ghi nhớ
+        clearRememberMe();
+      }
       
       // Check if there's a return path from location state
       const returnPath = (location.state as any)?.returnPath;
@@ -122,6 +141,12 @@ const Login = () => {
         
         // Lưu user vào localStorage
         setCurrentUser(user);
+        
+        // Lưu email để ghi nhớ đăng nhập (nếu user muốn)
+        // Với Google login, luôn lưu email để tiện lần sau
+        if (googleUser.email) {
+          saveRememberMe(googleUser.email);
+        }
         
         // Check return path
         const returnPath = (location.state as any)?.returnPath;

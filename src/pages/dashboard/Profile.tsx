@@ -61,13 +61,36 @@ const Profile = () => {
     try {
       // Load user account data
       const usersData = JSON.parse(localStorage.getItem(USERS_KEY) || "[]") as User[];
-      const foundUser = usersData.find((u) => u.id === currentUser.id || u.email === currentUser.email);
+      let foundUser = usersData.find((u) => u.id === currentUser.id || u.email === currentUser.email);
+
+      // If user not found in users list, create entry from currentUser
+      if (!foundUser) {
+        const newUserEntry: User = {
+          id: currentUser.id,
+          name: currentUser.name,
+          role: currentUser.role,
+          email: currentUser.email,
+          phone: "",
+          username: currentUser.username,
+          avatar: undefined,
+        };
+        usersData.push(newUserEntry);
+        localStorage.setItem(USERS_KEY, JSON.stringify(usersData));
+        foundUser = newUserEntry;
+      }
 
       if (foundUser) {
         setUser(foundUser);
-        setAvatar(foundUser.avatar);
-        avatarRef.current = foundUser.avatar; // Also set ref
-        console.log("Avatar loaded:", foundUser.avatar ? "Yes" : "No");
+        const loadedAvatar = foundUser.avatar;
+        if (loadedAvatar && loadedAvatar.startsWith("data:image")) {
+          setAvatar(loadedAvatar);
+          avatarRef.current = loadedAvatar; // Also set ref
+          console.log("Avatar loaded:", `Yes (length: ${loadedAvatar.length})`);
+        } else {
+          setAvatar(undefined);
+          avatarRef.current = undefined;
+          console.log("Avatar loaded: No", loadedAvatar ? `(invalid format: ${loadedAvatar.substring(0, 50)})` : "(not found)");
+        }
         setFormData({
           fullName: foundUser.name,
           email: foundUser.email || "",
@@ -139,13 +162,19 @@ const Profile = () => {
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64String = reader.result as string;
-      console.log("Avatar selected, base64 length:", base64String?.length || 0);
-      setAvatar(base64String);
-      // Also store in ref to ensure it's available when saving
-      avatarRef.current = base64String;
-      toast.success("Đã chọn ảnh đại diện");
+      if (base64String && base64String.startsWith("data:image")) {
+        console.log("Avatar selected, base64 length:", base64String.length);
+        setAvatar(base64String);
+        // Also store in ref to ensure it's available when saving
+        avatarRef.current = base64String;
+        toast.success("Đã chọn ảnh đại diện");
+      } else {
+        console.error("Invalid base64 string:", base64String?.substring(0, 50));
+        toast.error("Có lỗi xảy ra khi đọc file ảnh");
+      }
     };
-    reader.onerror = () => {
+    reader.onerror = (error) => {
+      console.error("FileReader error:", error);
       toast.error("Có lỗi xảy ra khi đọc file");
     };
     reader.readAsDataURL(file);
@@ -192,12 +221,18 @@ const Profile = () => {
         savedAvatar = stateAvatar;
       } else if (foundUserIndex !== -1 && usersData[foundUserIndex].avatar) {
         // Keep existing avatar from localStorage
-        savedAvatar = usersData[foundUserIndex].avatar;
-        console.log("Keeping existing avatar from localStorage:", savedAvatar ? `Yes (length: ${savedAvatar.length})` : "No");
+        const existingAvatar = usersData[foundUserIndex].avatar;
+        if (existingAvatar && existingAvatar !== "" && existingAvatar.startsWith("data:image")) {
+          savedAvatar = existingAvatar;
+          console.log("Keeping existing avatar from localStorage:", `Yes (length: ${existingAvatar.length})`);
+        } else {
+          savedAvatar = undefined;
+          console.log("Existing avatar is invalid, clearing it");
+        }
       } else if (user?.avatar && user.avatar !== "" && user.avatar.startsWith("data:image")) {
         // Fallback to user state avatar
         savedAvatar = user.avatar;
-        console.log("Using user state avatar:", savedAvatar ? `Yes (length: ${savedAvatar.length})` : "No");
+        console.log("Using user state avatar:", `Yes (length: ${user.avatar.length})`);
       } else {
         // No avatar available
         savedAvatar = undefined;
@@ -213,6 +248,7 @@ const Profile = () => {
           phone: formData.phone,
           avatar: savedAvatar,
         };
+        console.log(`Updating user at index ${foundUserIndex}, avatar:`, savedAvatar ? `Yes (${savedAvatar.length} chars)` : "No");
       } else {
         // Create new user entry if not exists
         const newUser: User = {
@@ -225,8 +261,17 @@ const Profile = () => {
           avatar: savedAvatar,
         };
         usersData.push(newUser);
+        console.log("Creating new user entry, avatar:", savedAvatar ? `Yes (${savedAvatar.length} chars)` : "No");
       }
+      
+      // Save to localStorage
       localStorage.setItem(USERS_KEY, JSON.stringify(usersData));
+      console.log("Saved to localStorage, total users:", usersData.length);
+      
+      // Verify the save by reading back
+      const verifyData = JSON.parse(localStorage.getItem(USERS_KEY) || "[]") as User[];
+      const verifyUser = verifyData.find((u) => u.id === currentUser.id || u.email === formData.email);
+      console.log("Verification - Avatar in localStorage:", verifyUser?.avatar ? `Yes (${verifyUser.avatar.length} chars)` : "No");
 
       // Update current user session
       const updatedCurrentUser = {
@@ -237,16 +282,34 @@ const Profile = () => {
       localStorage.setItem("cliniccare:auth", JSON.stringify(updatedCurrentUser));
       window.dispatchEvent(new CustomEvent("cliniccare:auth:changed", { detail: updatedCurrentUser }));
 
-      // Reload user data
-      const updatedUser = usersData.find((u) => u.id === currentUser.id || u.email === formData.email);
+      // Reload user data from localStorage to ensure we have the latest data
+      const reloadedUsersData = JSON.parse(localStorage.getItem(USERS_KEY) || "[]") as User[];
+      const updatedUser = reloadedUsersData.find((u) => u.id === currentUser.id || u.email === formData.email);
       if (updatedUser) {
         setUser(updatedUser);
         // Sync avatar state and ref with saved user avatar
         const savedAvatarValue = updatedUser.avatar;
-        setAvatar(savedAvatarValue);
-        avatarRef.current = savedAvatarValue; // Also update ref
-        console.log("Avatar saved:", savedAvatarValue ? `Yes (length: ${savedAvatarValue.length})` : "No");
-        console.log("Updated user object:", { ...updatedUser, avatar: savedAvatarValue ? "present" : "missing" });
+        if (savedAvatarValue && savedAvatarValue.startsWith("data:image")) {
+          setAvatar(savedAvatarValue);
+          avatarRef.current = savedAvatarValue; // Also update ref
+          console.log("Avatar saved and synced:", `Yes (length: ${savedAvatarValue.length})`);
+        } else {
+          // Only clear if we actually saved undefined, not if we're keeping existing
+          if (savedAvatar === undefined) {
+            setAvatar(undefined);
+            avatarRef.current = undefined;
+            console.log("Avatar cleared (invalid or empty)");
+          } else {
+            // Keep current avatar if we saved something
+            console.log("Keeping current avatar state");
+          }
+        }
+        console.log("Updated user object:", { 
+          id: updatedUser.id, 
+          name: updatedUser.name, 
+          email: updatedUser.email,
+          avatar: savedAvatarValue ? `present (${savedAvatarValue.length} chars)` : "missing" 
+        });
       }
 
       // Dispatch event to notify other components about avatar update
@@ -390,7 +453,15 @@ const Profile = () => {
               <CardContent>
                 <div className="flex items-center gap-6">
                   <Avatar className="h-24 w-24">
-                    <AvatarImage src={avatar || user?.avatar} />
+                    <AvatarImage 
+                      src={avatar || user?.avatar || undefined} 
+                      alt={displayName}
+                      onError={(e) => {
+                        // If image fails to load, hide it and show fallback
+                        const target = e.target as HTMLImageElement;
+                        target.style.display = 'none';
+                      }}
+                    />
                     <AvatarFallback className="bg-[#007BFF] text-white text-2xl">
                       {displayName.charAt(0).toUpperCase()}
                     </AvatarFallback>

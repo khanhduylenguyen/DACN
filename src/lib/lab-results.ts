@@ -26,6 +26,62 @@ export interface LabFile {
 }
 
 const STORAGE_KEY = "cliniccare:lab-results";
+const API_BASE = "/api/lab-results";
+
+// Helper: persist full list
+function writeAllResults(allResults: LabResult[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(allResults));
+  window.dispatchEvent(new CustomEvent("labResultsUpdated"));
+}
+
+// Sync: fetch server results for patient and merge into localStorage (async)
+async function syncFromServer(patientId: string) {
+  if (!patientId) return;
+  try {
+    const res = await fetch(`${API_BASE}?patientId=${encodeURIComponent(patientId)}`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) return;
+    const body = await res.json();
+    const serverList = Array.isArray(body) ? body : body?.data || [];
+    if (!Array.isArray(serverList)) return;
+
+    // Map server items to LabResult shape
+    const mapped: LabResult[] = serverList.map((s: any) => ({
+      id: s._id || s.id || `lab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      patientId: s.patientId,
+      testName: s.testName,
+      testDate: new Date(s.testDate).toISOString(),
+      facility: s.facility,
+      doctor: s.doctor,
+      files: (s.files || []).map((f: any) => ({
+        id: f.id || `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        name: f.name,
+        type: f.type,
+        url: f.url,
+        size: f.size,
+        uploadedAt: new Date(f.uploadedAt || f.uploadedAt).toISOString(),
+      })),
+      notes: s.notes,
+      createdAt: s.createdAt || new Date().toISOString(),
+      updatedAt: s.updatedAt || new Date().toISOString(),
+    }));
+
+    // Merge: replace all entries for this patient with server list
+    try {
+      const data = localStorage.getItem(STORAGE_KEY);
+      const allResults: LabResult[] = data ? JSON.parse(data) : [];
+      const others = allResults.filter((r) => r.patientId !== patientId);
+      const merged = [...mapped, ...others].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      writeAllResults(merged);
+    } catch (e) {
+      console.error("Failed merging server lab results:", e);
+    }
+  } catch (e) {
+    // ignore network errors; keep local copy
+  }
+}
 
 /**
  * Lấy tất cả kết quả xét nghiệm của bệnh nhân
@@ -36,6 +92,8 @@ export function getLabResults(patientId: string): LabResult[] {
     if (!data) return [];
     
     const allResults: LabResult[] = JSON.parse(data);
+    // Trigger async sync in background (do not block UI)
+    syncFromServer(patientId).catch(() => {});
     return allResults.filter((r) => r.patientId === patientId);
   } catch (error) {
     console.error("Error loading lab results:", error);
@@ -75,11 +133,33 @@ export function saveLabResult(result: Omit<LabResult, "id" | "createdAt" | "upda
     };
     
     allResults.push(newResult);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(allResults));
-    
-    // Dispatch event để các component khác có thể cập nhật
-    window.dispatchEvent(new CustomEvent("labResultsUpdated"));
-    
+    writeAllResults(allResults);
+
+    // Attempt to send to server asynchronously
+    (async () => {
+      try {
+        await fetch(API_BASE, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            patientId: newResult.patientId,
+            testName: newResult.testName,
+            testDate: newResult.testDate,
+            facility: newResult.facility,
+            doctor: newResult.doctor,
+            notes: newResult.notes,
+            files: newResult.files.map((f) => ({ name: f.name, type: f.type, url: f.url, size: f.size, uploadedAt: f.uploadedAt })),
+            uploadedBy: "patient",
+          }),
+        });
+        // Refresh from server to get canonical ids if needed
+        await syncFromServer(newResult.patientId);
+      } catch (e) {
+        // keep local copy if network fails
+        console.error("Failed to push lab result to server:", e);
+      }
+    })();
+
     return newResult;
   } catch (error) {
     console.error("Error saving lab result:", error);
@@ -107,11 +187,24 @@ export function updateLabResult(id: string, updates: Partial<LabResult>): LabRes
       updatedAt: new Date().toISOString(),
     };
     
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(allResults));
-    
-    // Dispatch event
-    window.dispatchEvent(new CustomEvent("labResultsUpdated"));
-    
+    writeAllResults(allResults);
+
+    // Attempt API update (async)
+    (async () => {
+      try {
+        // If id looks like server id (starts with  ObjectId length) try calling
+        await fetch(`${API_BASE}/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        });
+        // sync
+        await syncFromServer(allResults[index].patientId);
+      } catch (e) {
+        console.error("Failed to update lab result on server:", e);
+      }
+    })();
+
     return allResults[index];
   } catch (error) {
     console.error("Error updating lab result:", error);
@@ -132,11 +225,17 @@ export function deleteLabResult(id: string): boolean {
     
     if (filtered.length === allResults.length) return false; // Không tìm thấy
     
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
-    
-    // Dispatch event
-    window.dispatchEvent(new CustomEvent("labResultsUpdated"));
-    
+    writeAllResults(filtered);
+
+    // Attempt server delete (async)
+    (async () => {
+      try {
+        await fetch(`${API_BASE}/${id}`, { method: "DELETE" });
+      } catch (e) {
+        console.error("Failed to delete lab result on server:", e);
+      }
+    })();
+
     return true;
   } catch (error) {
     console.error("Error deleting lab result:", error);

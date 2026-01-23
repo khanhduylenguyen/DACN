@@ -29,6 +29,7 @@ const Header = () => {
   const [showHotlineDialog, setShowHotlineDialog] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [userAvatar, setUserAvatar] = useState<string | undefined>(undefined);
+  const [doctorClinic, setDoctorClinic] = useState<string | undefined>(undefined);
 
   const loadUserAvatar = () => {
     if (!currentUser) {
@@ -56,6 +57,13 @@ const Header = () => {
         if (foundStaff?.avatar) {
           setUserAvatar(foundStaff.avatar);
           return;
+        }
+        // set clinic/branch name if available
+        if (foundStaff) {
+          const clinic = foundStaff.clinicName || foundStaff.department || foundStaff.specialty;
+          setDoctorClinic(clinic);
+        } else {
+          setDoctorClinic(undefined);
         }
       }
     } catch (error) {
@@ -87,6 +95,36 @@ const Header = () => {
       window.removeEventListener("storage", handleProfileUpdate);
       window.removeEventListener("cliniccare:avatar:updated", handleProfileUpdate);
     };
+  }, [currentUser]);
+ 
+  // Fetch staff info from server to get clinic/branch for doctor accounts
+  useEffect(() => {
+    const fetchStaff = async () => {
+      if (!currentUser || currentUser.role !== "doctor") return;
+      try {
+        const res = await fetch("/api/staff");
+        if (!res.ok) {
+          console.warn("Failed to fetch staff from server:", res.status);
+          return;
+        }
+        const data = await res.json();
+        const staffList = Array.isArray(data.data) ? data.data : data;
+        const found = staffList.find(
+          (s: any) =>
+            (s.userId && String(s.userId) === String(currentUser.id)) ||
+            s.email === currentUser.email ||
+            s.fullName === currentUser.name
+        );
+        if (found) {
+          const clinic = found.clinicName || found.department || found.specialty;
+          setDoctorClinic(clinic);
+        }
+      } catch (error) {
+        console.error("Error fetching staff info:", error);
+      }
+    };
+
+    fetchStaff();
   }, [currentUser]);
 
   const roleActions: Record<UserRole, { href: string; label: string }> = {
@@ -287,9 +325,14 @@ const Header = () => {
                         {currentUser.name?.charAt(0).toUpperCase() || "U"}
                       </AvatarFallback>
                     </Avatar>
-                    <span className="hidden md:block text-sm font-medium text-gray-900">
-                      {currentUser.name || "Người dùng"}
-                    </span>
+                    <div className="hidden md:flex md:flex-col md:items-start">
+                      <span className="text-sm font-medium text-gray-900">
+                        {currentUser.name || "Người dùng"}
+                      </span>
+                      {currentUser.role === "doctor" && doctorClinic && (
+                        <span className="text-xs text-[#687280]">{doctorClinic}</span>
+                      )}
+                    </div>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
@@ -405,7 +448,12 @@ const Header = () => {
                           {currentUser.name?.charAt(0).toUpperCase() || "U"}
                         </AvatarFallback>
                       </Avatar>
-                      <span className="text-sm font-medium text-gray-900">{currentUser.name || "Người dùng"}</span>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium text-gray-900">{currentUser.name || "Người dùng"}</span>
+                        {currentUser.role === "doctor" && doctorClinic && (
+                          <span className="text-xs text-[#687280]">{doctorClinic}</span>
+                        )}
+                      </div>
                     </div>
                     {dashboardLink && (
                       <Button variant="outline" size="sm" className="w-full gap-2 justify-start" asChild>

@@ -1,0 +1,336 @@
+{
+  "info": {
+    "name": "ClinicCare API Collection",
+    "description": "API testing collection for ClinicCare medical management system",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3000/api",
+      "type": "string"
+    },
+    {
+      "key": "auth_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "Server Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/../health",
+              "host": ["{{base_url}}"],
+              "path": ["..", "health"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Nguyễn Văn A\",\n  \"email\": \"test@example.com\",\n  \"password\": \"password123\",\n  \"role\": \"patient\",\n  \"phone\": \"0123456789\",\n  \"dateOfBirth\": \"1990-01-01\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('auth_token', response.token);",
+                  "    console.log('Token saved:', response.token);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"test@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "me"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Patients",
+      "item": [
+        {
+          "name": "Get All Patients",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/patients",
+              "host": ["{{base_url}}"],
+              "path": ["patients"]
+            }
+          }
+        },
+        {
+          "name": "Get Patient by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/patients/:id",
+              "host": ["{{base_url}}"],
+              "path": ["patients", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "PATIENT_ID_HERE"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "EHR (Electronic Health Records)",
+      "item": [
+        {
+          "name": "Get All EHR Records",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/ehr",
+              "host": ["{{base_url}}"],
+              "path": ["ehr"]
+            }
+          }
+        },
+        {
+          "name": "Create EHR Record",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"PATIENT_ID_HERE\",\n  \"doctorId\": \"DOCTOR_ID_HERE\",\n  \"doctorName\": \"Dr. Nguyễn Văn Bác Sĩ\",\n  \"visitDate\": \"2024-12-24T10:00:00.000Z\",\n  \"diagnosis\": \"Viêm họng cấp\",\n  \"symptoms\": \"Đau họng, sốt nhẹ\",\n  \"treatment\": \"Kháng sinh, uống nhiều nước\",\n  \"notes\": \"Theo dõi sau 3 ngày\",\n  \"vitalSigns\": {\n    \"temperature\": 38.5,\n    \"bloodPressure\": \"120/80\",\n    \"heartRate\": 85\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/ehr",
+              "host": ["{{base_url}}"],
+              "path": ["ehr"]
+            }
+          }
+        },
+        {
+          "name": "Get EHR by Patient ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/ehr/patient/:patientId",
+              "host": ["{{base_url}}"],
+              "path": ["ehr", "patient", ":patientId"],
+              "variable": [
+                {
+                  "key": "patientId",
+                  "value": "PATIENT_ID_HERE"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Appointments",
+      "item": [
+        {
+          "name": "Get All Appointments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/appointments",
+              "host": ["{{base_url}}"],
+              "path": ["appointments"]
+            }
+          }
+        },
+        {
+          "name": "Create Appointment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"PATIENT_ID_HERE\",\n  \"doctorId\": \"DOCTOR_ID_HERE\",\n  \"appointmentDate\": \"2024-12-25T09:00:00.000Z\",\n  \"reason\": \"Khám định kỳ\",\n  \"notes\": \"Khám tổng quát\",\n  \"status\": \"scheduled\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/appointments",
+              "host": ["{{base_url}}"],
+              "path": ["appointments"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "item": [
+        {
+          "name": "Get User Notifications",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/notifications",
+              "host": ["{{base_url}}"],
+              "path": ["notifications"]
+            }
+          }
+        },
+        {
+          "name": "Mark Notification as Read",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{auth_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"read\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/notifications/:id",
+              "host": ["{{base_url}}"],
+              "path": ["notifications", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "NOTIFICATION_ID_HERE"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
+
+
+
+
+

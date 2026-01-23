@@ -151,8 +151,8 @@ const Register = () => {
         const step1Data = step1Form.getValues();
         const step2Data = step2Form.getValues();
         
-        // Đăng ký user mới với role patient
-        const newUser = registerUser(
+        // Đăng ký user mới với role patient (async)
+        const newUser = await registerUser(
           step1Data.fullName,
           step1Data.email,
           step1Data.phone,
@@ -179,7 +179,8 @@ const Register = () => {
         step3Form.setError("otp", { message: result.message || "Mã OTP không đúng" });
       }
     } catch (error) {
-      toast.error("Có lỗi xảy ra khi xác thực OTP");
+      console.error("Registration error:", error);
+      toast.error("Có lỗi xảy ra khi đăng ký. Vui lòng thử lại.");
     } finally {
       setIsLoading(false);
     }

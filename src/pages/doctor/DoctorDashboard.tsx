@@ -13,9 +13,11 @@ import {
   Clock,
   Users,
   TrendingUp,
+  Bell,
 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line } from "recharts";
 import { getCurrentUser } from "@/lib/auth";
+import { getUnreadCount, getDoctorNotifications } from "@/lib/doctor-notifications";
 import { toast } from "sonner";
 
 const APPOINTMENTS_STORAGE_KEY = "cliniccare:appointments";
@@ -136,6 +138,7 @@ const DoctorDashboard = () => {
   const [prescriptions, setPrescriptions] = useState<Prescription[]>([]);
   const [ehrRecords, setEhrRecords] = useState<EHRRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
 
   useEffect(() => {
     const loadData = () => {
@@ -163,6 +166,14 @@ const DoctorDashboard = () => {
         setAppointments(doctorAppointments);
         setPrescriptions(doctorPrescriptions);
         setEhrRecords(doctorEHRRecords);
+
+        // Load unread notifications
+        try {
+          const unread = getUnreadCount(user.id);
+          setUnreadNotifications(unread);
+        } catch (error) {
+          console.error("Error loading notifications:", error);
+        }
       } catch (error) {
         console.error("Error loading data:", error);
       } finally {
@@ -174,11 +185,23 @@ const DoctorDashboard = () => {
 
     // Listen for updates
     const handleUpdate = () => loadData();
+    const handleNotificationUpdate = () => {
+      if (user?.id) {
+        try {
+          const unread = getUnreadCount(user.id);
+          setUnreadNotifications(unread);
+        } catch (error) {
+          console.error("Error loading notifications:", error);
+        }
+      }
+    };
     window.addEventListener("appointmentsUpdated", handleUpdate);
+    window.addEventListener("doctorNotificationsUpdated", handleNotificationUpdate);
     window.addEventListener("storage", handleUpdate);
 
     return () => {
       window.removeEventListener("appointmentsUpdated", handleUpdate);
+      window.removeEventListener("doctorNotificationsUpdated", handleNotificationUpdate);
       window.removeEventListener("storage", handleUpdate);
     };
   }, [user?.id]);
@@ -359,6 +382,37 @@ const DoctorDashboard = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* Notifications Card */}
+        {unreadNotifications > 0 && (
+          <Card className="border-[#E5E7EB] bg-orange-50/50">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-orange-500">
+                    <Bell className="h-6 w-6 text-white" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-[#687280]">Thông báo mới</p>
+                    <p className="text-lg font-semibold text-gray-900">
+                      Bạn có {unreadNotifications} thông báo chưa đọc
+                    </p>
+                    <p className="text-sm text-[#687280]">
+                      Nhắc lịch khám, đơn thuốc mới và nhắc tái khám
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  className="bg-orange-500 hover:bg-orange-600"
+                  onClick={() => navigate("/doctor/notifications")}
+                >
+                  Xem thông báo
+                  <ArrowRight className="h-4 w-4 ml-2" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Next Appointment Card */}
         {nextAppointment && (

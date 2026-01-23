@@ -21,41 +21,9 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
+import { listPrescriptions, type Prescription, type PrescriptionDrug } from "@/lib/api";
+import { toast } from "sonner";
 
-const PRESCRIPTIONS_STORAGE_KEY = "cliniccare:prescriptions";
-
-interface PrescriptionDrug {
-  name: string;
-  dose: string;
-  quantity?: string;
-  instructions?: string;
-}
-
-interface Prescription {
-  id: string;
-  patientId: string;
-  patientName: string;
-  doctorId: string;
-  doctorName: string;
-  date: string; // ISO date string
-  drugs: PrescriptionDrug[];
-  diagnosis?: string;
-  notes?: string;
-  status?: "active" | "completed" | "cancelled";
-  createdAt: string;
-}
-
-// Load prescriptions from localStorage
-const loadPrescriptions = (patientId: string): Prescription[] => {
-  try {
-    const stored = localStorage.getItem(PRESCRIPTIONS_STORAGE_KEY);
-    if (stored) {
-      const allPrescriptions: Prescription[] = JSON.parse(stored);
-      return allPrescriptions.filter((p) => p.patientId === patientId);
-    }
-  } catch {}
-  return [];
-};
 
 const Prescriptions = () => {
   const user = getCurrentUser();
@@ -75,7 +43,7 @@ const Prescriptions = () => {
       return;
     }
 
-    const loadData = () => {
+    const loadData = async () => {
       // Prevent multiple simultaneous loads
       if (isLoadingRef.current) return;
 
@@ -83,17 +51,12 @@ const Prescriptions = () => {
       setIsLoading(true);
 
       try {
-        const patientPrescriptions = loadPrescriptions(user.id);
-        // Sort by date (newest first)
-        const sorted = patientPrescriptions.sort((a, b) => {
-          const dateA = new Date(a.date).getTime();
-          const dateB = new Date(b.date).getTime();
-          return dateB - dateA;
-        });
-        setPrescriptions(sorted);
+        const patientPrescriptions = await listPrescriptions({ patientId: user.id });
+        setPrescriptions(patientPrescriptions);
       } catch (error) {
         console.error("Error loading prescriptions:", error);
         setPrescriptions([]);
+        toast.error("Không thể tải danh sách toa thuốc");
       } finally {
         setIsLoading(false);
         isLoadingRef.current = false;
@@ -102,19 +65,6 @@ const Prescriptions = () => {
 
     // Load immediately on mount or user change
     loadData();
-
-    // Listen for custom updates only (not all storage events)
-    const handlePrescriptionUpdate = () => {
-      if (!isLoadingRef.current) {
-        loadData();
-      }
-    };
-
-    window.addEventListener("prescriptionsUpdated", handlePrescriptionUpdate);
-
-    return () => {
-      window.removeEventListener("prescriptionsUpdated", handlePrescriptionUpdate);
-    };
   }, [user?.id]); // Only depend on user.id, not the whole user object
 
   // Filter prescriptions
@@ -444,7 +394,7 @@ const Prescriptions = () => {
               <div className="space-y-4">
                 {filteredPrescriptions.map((prescription) => (
                   <div
-                    key={prescription.id}
+                    key={prescription._id}
                     className="p-4 rounded-lg border border-[#E5E7EB] bg-white hover:shadow-md transition-all"
                   >
                     <div className="flex items-start justify-between">

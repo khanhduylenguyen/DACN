@@ -6,6 +6,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { startReminderService, stopReminderService } from "@/lib/reminders";
+import { startDoctorReminderService } from "@/lib/doctor-notifications";
+import { getCurrentUser, AUTH_EVENT } from "@/lib/auth";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import ErrorBoundary from "@/components/error/ErrorBoundary";
 import Index from "./pages/Index";
@@ -32,6 +34,11 @@ import DoctorRecords from "./pages/doctor/Records";
 import DoctorPrescriptions from "./pages/doctor/Prescriptions";
 import DoctorStats from "./pages/doctor/Stats";
 import DoctorProfile from "./pages/doctor/Profile";
+import FamilyPatients from "./pages/doctor/FamilyPatients";
+import ScheduleManagement from "./pages/doctor/ScheduleManagement";
+import PatientFollowUp from "./pages/doctor/PatientFollowUp";
+import Analytics from "./pages/doctor/Analytics";
+import DoctorNotifications from "./pages/doctor/Notifications";
 import AdminProfile from "./pages/dashboard/Profile";
 import PatientDashboard from "./pages/patient/PatientDashboard";
 import PatientProfile from "./pages/patient/Profile";
@@ -45,6 +52,8 @@ import MedicationSchedule from "./pages/patient/MedicationSchedule";
 import TestResults from "./pages/patient/TestResults";
 import HealthDashboard from "./pages/patient/HealthDashboard";
 import Family from "./pages/patient/Family";
+import FamilyMemberDetail from "./pages/patient/FamilyMemberDetail";
+import FamilyDashboard from "./pages/patient/FamilyDashboard";
 import AdvancedDoctorSearch from "./pages/patient/AdvancedDoctorSearch";
 import TelemedicinePage from "./pages/telemedicine/Telemedicine";
 import MomoCallback from "./pages/payment/MomoCallback";
@@ -89,10 +98,46 @@ const ReminderService = () => {
   return null;
 };
 
+// Component để khởi động doctor reminder service
+const DoctorReminderService = () => {
+  useEffect(() => {
+    // Check if user is a doctor and start reminder service
+    const checkAndStart = () => {
+      try {
+        const user = getCurrentUser();
+        if (user && user.role === "doctor" && user.id) {
+          const cleanup = startDoctorReminderService(user.id);
+          return cleanup;
+        }
+      } catch (error) {
+        console.error("Error starting doctor reminder service:", error);
+      }
+      return () => {};
+    };
+
+    const cleanup = checkAndStart();
+
+    // Also listen for auth changes
+    const handleAuthChange = () => {
+      cleanup();
+      checkAndStart();
+    };
+    window.addEventListener(AUTH_EVENT, handleAuthChange as EventListener);
+
+    return () => {
+      cleanup();
+      window.removeEventListener(AUTH_EVENT, handleAuthChange as EventListener);
+    };
+  }, []);
+
+  return null;
+};
+
 // Wrapper component để xử lý GoogleOAuthProvider an toàn
 const AppContent = () => (
   <TooltipProvider>
     <ReminderService />
+    <DoctorReminderService />
     <Toaster />
     <Sonner />
     <BrowserRouter>
@@ -121,7 +166,12 @@ const AppContent = () => (
           <Route path="/doctor/appointments" element={<RequireRole roles={["doctor"]}><DoctorAppointments /></RequireRole>} />
           <Route path="/doctor/records" element={<RequireRole roles={["doctor"]}><DoctorRecords /></RequireRole>} />
           <Route path="/doctor/prescriptions" element={<RequireRole roles={["doctor"]}><DoctorPrescriptions /></RequireRole>} />
+          <Route path="/doctor/family-patients" element={<RequireRole roles={["doctor"]}><FamilyPatients /></RequireRole>} />
+          <Route path="/doctor/schedule" element={<RequireRole roles={["doctor"]}><ScheduleManagement /></RequireRole>} />
+          <Route path="/doctor/followup" element={<RequireRole roles={["doctor"]}><PatientFollowUp /></RequireRole>} />
+          <Route path="/doctor/analytics" element={<RequireRole roles={["doctor"]}><Analytics /></RequireRole>} />
           <Route path="/doctor/stats" element={<RequireRole roles={["doctor"]}><DoctorStats /></RequireRole>} />
+          <Route path="/doctor/notifications" element={<RequireRole roles={["doctor"]}><DoctorNotifications /></RequireRole>} />
           <Route path="/doctor/profile" element={<RequireRole roles={["doctor"]}><DoctorProfile /></RequireRole>} />
           {/* Patient Routes */}
           <Route path="/patient" element={<RequireRole roles={["patient"]}><PatientDashboard /></RequireRole>} />
@@ -135,10 +185,14 @@ const AppContent = () => (
           <Route path="/patient/test-results" element={<RequireRole roles={["patient"]}><TestResults /></RequireRole>} />
           <Route path="/patient/health" element={<RequireRole roles={["patient"]}><HealthDashboard /></RequireRole>} />
           <Route path="/patient/family" element={<RequireRole roles={["patient"]}><Family /></RequireRole>} />
+          <Route path="/patient/family/dashboard" element={<RequireRole roles={["patient"]}><FamilyDashboard /></RequireRole>} />
+          <Route path="/patient/family/:id" element={<RequireRole roles={["patient"]}><FamilyMemberDetail /></RequireRole>} />
           <Route path="/patient/profile" element={<RequireRole roles={["patient"]}><PatientProfile /></RequireRole>} />
           <Route path="/patient/search" element={<RequireRole roles={["patient"]}><AdvancedDoctorSearch /></RequireRole>} />
           {/* Telemedicine */}
           <Route path="/telemedicine" element={<RequireRole roles={["patient", "doctor"]}><TelemedicinePage /></RequireRole>} />
+          {/* Allow direct links to a specific appointment or instant room (e.g. /telemedicine/A008 or /telemedicine/instant-REQ-123) */}
+          <Route path="/telemedicine/:appointmentId" element={<RequireRole roles={["patient", "doctor"]}><TelemedicinePage /></RequireRole>} />
           {/* Payment */}
           <Route path="/payment/momo/callback" element={<MomoCallback />} />
           <Route path="/payment/momo/qr" element={<MomoQr />} />

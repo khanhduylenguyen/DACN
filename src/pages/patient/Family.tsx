@@ -35,7 +35,12 @@ import {
   Mail,
   Baby,
   UserCircle,
+  ArrowRight,
+  QrCode,
+  Syringe,
+  AlertCircle,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { getCurrentUser, AUTH_EVENT } from "@/lib/auth";
 import {
   getFamilyMembers,
@@ -47,10 +52,12 @@ import {
   type FamilyMember,
 } from "@/lib/family";
 import { getLatestHealthMetric, getHealthMetrics } from "@/lib/health";
+import { getUpcomingVaccinations, getActiveMedications } from "@/lib/family-health";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 const Family = () => {
+  const navigate = useNavigate();
   const [currentUser, setCurrentUser] = useState<ReturnType<typeof getCurrentUser>>(getCurrentUser());
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -120,6 +127,16 @@ const Family = () => {
     
     // For now, return null - in production, you'd need a better linking mechanism
     return null;
+  };
+
+  // Get upcoming vaccinations for a member
+  const getUpcomingVaccinationsForMember = (memberId: string) => {
+    return getUpcomingVaccinations(memberId);
+  };
+
+  // Get active medications for a member
+  const getActiveMedicationsForMember = (memberId: string) => {
+    return getActiveMedications(memberId);
   };
 
   // Get next appointment for a member
@@ -324,9 +341,15 @@ const Family = () => {
               const age = getAge(member.dateOfBirth);
               const nextAppointment = getNextAppointment(member);
               const RelationshipIcon = getRelationshipIcon(member.relationship);
+              const upcomingVaccinations = getUpcomingVaccinationsForMember(member.id);
+              const activeMedications = getActiveMedicationsForMember(member.id);
 
               return (
-                <Card key={member.id} className="border-[#E5E7EB] hover:shadow-lg transition-shadow">
+                <Card 
+                  key={member.id} 
+                  className="border-[#E5E7EB] hover:shadow-lg transition-shadow cursor-pointer"
+                  onClick={() => navigate(`/patient/family/${member.id}`)}
+                >
                   <CardHeader>
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-3">
@@ -343,7 +366,7 @@ const Family = () => {
                           </CardDescription>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -387,9 +410,31 @@ const Family = () => {
                       <p className="text-xs font-semibold text-[#687280] mb-2 uppercase">
                         Tình trạng sức khỏe
                       </p>
-                      <div className="flex items-center gap-2 text-sm text-[#687280]">
-                        <Activity className="h-4 w-4" />
-                        <span>Chưa có dữ liệu</span>
+                      <div className="space-y-2">
+                        {member.bloodType && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <Heart className="h-4 w-4 text-red-600" />
+                            <span className="text-gray-900">Nhóm máu: {member.bloodType}</span>
+                          </div>
+                        )}
+                        {member.allergies && member.allergies.length > 0 && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <AlertCircle className="h-4 w-4 text-orange-600" />
+                            <span className="text-gray-900">{member.allergies.length} dị ứng</span>
+                          </div>
+                        )}
+                        {member.chronicConditions && member.chronicConditions.length > 0 && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <Activity className="h-4 w-4 text-orange-600" />
+                            <span className="text-gray-900">{member.chronicConditions.length} bệnh nền</span>
+                          </div>
+                        )}
+                        {!member.bloodType && (!member.allergies || member.allergies.length === 0) && (!member.chronicConditions || member.chronicConditions.length === 0) && (
+                          <div className="flex items-center gap-2 text-sm text-[#687280]">
+                            <Activity className="h-4 w-4" />
+                            <span>Chưa có dữ liệu</span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -426,10 +471,42 @@ const Family = () => {
                       <p className="text-xs font-semibold text-[#687280] mb-2 uppercase">
                         Nhắc nhở
                       </p>
-                      <div className="flex items-center gap-2 text-sm text-[#687280]">
-                        <Pill className="h-4 w-4" />
-                        <span>Chưa có nhắc nhở</span>
+                      <div className="space-y-2">
+                        {activeMedications.length > 0 && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <Pill className="h-4 w-4 text-green-600" />
+                            <span className="text-gray-900">{activeMedications.length} thuốc đang dùng</span>
+                          </div>
+                        )}
+                        {upcomingVaccinations.length > 0 && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <Syringe className="h-4 w-4 text-blue-600" />
+                            <span className="text-gray-900">{upcomingVaccinations.length} mũi tiêm sắp tới</span>
+                          </div>
+                        )}
+                        {activeMedications.length === 0 && upcomingVaccinations.length === 0 && (
+                          <div className="flex items-center gap-2 text-sm text-[#687280]">
+                            <Pill className="h-4 w-4" />
+                            <span>Chưa có nhắc nhở</span>
+                          </div>
+                        )}
                       </div>
+                    </div>
+
+                    {/* View Details Button */}
+                    <div className="pt-3 border-t border-[#E5E7EB]">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/patient/family/${member.id}`);
+                        }}
+                      >
+                        Xem chi tiết
+                        <ArrowRight className="h-4 w-4 ml-2" />
+                      </Button>
                     </div>
                   </CardContent>
                 </Card>

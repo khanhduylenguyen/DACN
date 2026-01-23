@@ -3,6 +3,8 @@
  * Quản lý thành viên gia đình và hồ sơ sức khỏe của họ
  */
 
+export type FamilyRole = "owner" | "member" | "guardian";
+
 export interface FamilyMember {
   id: string;
   parentId: string; // ID của tài khoản chính (người quản lý)
@@ -13,6 +15,66 @@ export interface FamilyMember {
   phone?: string;
   email?: string;
   avatar?: string;
+  notes?: string;
+  role?: FamilyRole; // Phân quyền trong gia đình
+  // Personal Health Record (PHR)
+  bloodType?: string; // "A", "B", "AB", "O" với Rh+/Rh-
+  allergies?: string[]; // Danh sách dị ứng
+  chronicConditions?: string[]; // Bệnh nền
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  // Health metrics (latest)
+  latestHeight?: number; // cm
+  latestWeight?: number; // kg
+  latestBloodPressure?: { systolic: number; diastolic: number };
+  latestBloodSugar?: number; // mg/dL
+  latestHeartRate?: number; // bpm
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PersonalHealthRecord {
+  id: string;
+  familyMemberId: string;
+  recordDate: string; // ISO format
+  type: "appointment" | "prescription" | "lab_result" | "diagnosis" | "vaccination" | "health_metric" | "other";
+  title: string;
+  description?: string;
+  doctorName?: string;
+  hospitalName?: string;
+  attachments?: string[]; // URLs hoặc base64 của ảnh/PDF
+  metadata?: Record<string, any>; // Dữ liệu bổ sung
+  createdAt: string;
+}
+
+export interface VaccinationRecord {
+  id: string;
+  familyMemberId: string;
+  vaccineName: string;
+  vaccineType: "routine" | "optional" | "travel" | "seasonal";
+  doseNumber: number; // Mũi thứ mấy
+  totalDoses: number; // Tổng số mũi cần tiêm
+  vaccinationDate: string; // ISO format
+  nextDoseDate?: string; // ISO format - ngày tiêm mũi tiếp theo
+  hospitalName?: string;
+  doctorName?: string;
+  batchNumber?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface MedicationRecord {
+  id: string;
+  familyMemberId: string;
+  medicationName: string;
+  dosage: string; // "500mg", "1 viên", etc.
+  frequency: string; // "2 lần/ngày", "sau ăn", etc.
+  startDate: string; // ISO format
+  endDate?: string; // ISO format
+  prescribedBy?: string; // Tên bác sĩ
+  prescriptionDate?: string; // ISO format
+  reminderTimes?: string[]; // ["08:00", "20:00"]
+  isActive: boolean;
   notes?: string;
   createdAt: string;
   updatedAt: string;

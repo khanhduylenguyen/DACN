@@ -10,6 +10,7 @@ export type AuthUser = {
 
 const AUTH_KEY = "cliniccare:auth";
 const USERS_KEY = "cliniccare:users";
+const REMEMBER_ME_KEY = "cliniccare:rememberMe";
 export const AUTH_EVENT = "cliniccare:auth:changed";
 
 export function getCurrentUser(): AuthUser | null {
@@ -35,6 +36,39 @@ export function logout(): void {
   }
 }
 
+/**
+ * Lưu thông tin đăng nhập để ghi nhớ (chỉ lưu email/username, không lưu mật khẩu)
+ */
+export function saveRememberMe(identifier: string): void {
+  try {
+    localStorage.setItem(REMEMBER_ME_KEY, identifier);
+  } catch (error) {
+    console.error("Error saving remember me:", error);
+  }
+}
+
+/**
+ * Lấy thông tin đăng nhập đã lưu
+ */
+export function getRememberMe(): string | null {
+  try {
+    return localStorage.getItem(REMEMBER_ME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Xóa thông tin đăng nhập đã lưu
+ */
+export function clearRememberMe(): void {
+  try {
+    localStorage.removeItem(REMEMBER_ME_KEY);
+  } catch (error) {
+    console.error("Error clearing remember me:", error);
+  }
+}
+
 export function hasRole(allowed: UserRole | UserRole[]): boolean {
   const user = getCurrentUser();
   if (!user) return false;
@@ -45,7 +79,7 @@ export function hasRole(allowed: UserRole | UserRole[]): boolean {
 export type DemoUser = AuthUser & { password: string; phone?: string };
 
 export const DEMO_USERS: DemoUser[] = [
-  { id: "U_ADMIN", name: "Admin User", role: "admin", email: "  ", password: "123456" },
+  { id: "U_ADMIN", name: "Admin User", role: "admin", email: "admin@cliniccare.vn", password: "123456" },
   { id: "U_DOCTOR", name: "BS. Lê Nguyễn Khánh Duy", role: "doctor", email: "doctor@cliniccare.vn", password: "123456" },
   { id: "U_PATIENT", name: "Nguyễn Ngọc Đầy", role: "patient", email: "patient@cliniccare.vn", password: "123456", phone: "0901234567" },
 ];
@@ -84,14 +118,112 @@ export function authenticate(identifier: string, password: string): AuthUser | n
  * @param password - Mật khẩu
  * @returns AuthUser nếu thành công, null nếu thất bại (email/phone/username đã tồn tại)
  */
-export function registerUser(
+export async function registerUser(
   fullName: string,
   email: string,
   phone: string,
   username: string,
   password: string
-): AuthUser | null {
+): Promise<AuthUser | null> {
   try {
+    // Thử gọi API backend trước
+    const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api";
+    
+    try {
+      const response = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: fullName,
+          email: email,
+          phone: phone,
+          password: password,
+          role: "patient",
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.data?.user) {
+          // Lưu token nếu có
+          if (data.data.token) {
+            localStorage.setItem("cliniccare:token", data.data.token);
+          }
+          
+          // Trả về user từ API
+          const apiUser: AuthUser = {
+            id: data.data.user.id,
+            name: data.data.user.name,
+            email: data.data.user.email,
+            role: data.data.user.role,
+            username: username,
+          };
+          
+          // Cũng lưu vào localStorage để tương thích với code cũ
+          const list: DemoUser[] = JSON.parse(localStorage.getItem(USERS_KEY) || "[]");
+          const newUser: DemoUser = {
+            ...apiUser,
+            phone: phone,
+            password: password,
+            username: username,
+          };
+          list.push(newUser);
+          localStorage.setItem(USERS_KEY, JSON.stringify(list));
+          
+          // Tạo patient record nếu cần
+          try {
+            const PATIENTS_STORAGE_KEY = "cliniccare:patients";
+            const existingPatients = JSON.parse(localStorage.getItem(PATIENTS_STORAGE_KEY) || "[]");
+            const existingPatient = existingPatients.find(
+              (p: any) => p.phone === phone || (p.email === email)
+            );
+            if (!existingPatient) {
+              let maxId = 0;
+              existingPatients.forEach((p: any) => {
+                const match = p.id?.match(/^P(\d+)$/);
+                if (match) {
+                  const num = parseInt(match[1], 10);
+                  if (num > maxId) maxId = num;
+                }
+              });
+              const patientId = `P${String(maxId + 1).padStart(3, "0")}`;
+              const newPatient = {
+                id: patientId,
+                fullName: fullName,
+                gender: "male" as "male" | "female",
+                age: 0,
+                phone: phone,
+                doctor: "Chưa phân công",
+                lastVisit: new Date().toISOString().slice(0, 10),
+                status: "pending" as "pending" | "treating" | "completed",
+                email: email,
+                userId: apiUser.id,
+              };
+              existingPatients.push(newPatient);
+              localStorage.setItem(PATIENTS_STORAGE_KEY, JSON.stringify(existingPatients));
+              window.dispatchEvent(new CustomEvent("patientRegistered", { detail: newPatient }));
+            }
+          } catch (error) {
+            console.error("Error creating patient record:", error);
+          }
+          
+          return apiUser;
+        }
+      } else {
+        const errorData = await response.json();
+        console.warn("API register failed, falling back to localStorage:", errorData.message);
+        // Nếu email đã tồn tại trong API, không fallback
+        if (errorData.message?.includes("already exists") || errorData.message?.includes("Email")) {
+          return null;
+        }
+      }
+    } catch (apiError) {
+      console.warn("API not available, falling back to localStorage:", apiError);
+    }
+    
+    // Fallback: Lưu vào localStorage nếu API không khả dụng
     const list: DemoUser[] = JSON.parse(localStorage.getItem(USERS_KEY) || "[]");
     
     // Kiểm tra email, phone, hoặc username đã tồn tại chưa

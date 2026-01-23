@@ -4,6 +4,7 @@ import DoctorLayout from "@/components/layout/DoctorLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -48,9 +49,23 @@ import {
   Calendar,
   Stethoscope,
   Video,
+  AlertCircle,
 } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { createEHR, type EHRRecord } from "@/lib/api";
+import {
+  getScheduleUtilization,
+  isScheduleNearlyFull,
+  getSuggestedTimeSlots,
+} from "@/lib/doctor-schedule";
+import { createInteraction, createFollowUpFromAppointment } from "@/lib/patient-followup";
+import {
+  createAppointmentConfirmedNotification,
+  createAppointmentCancelledNotification,
+  createEHRNotification,
+  createPrescriptionNotification,
+} from "@/lib/patient-notifications";
+import { createDoctorNotification } from "@/lib/doctor-notifications";
 
 const APPOINTMENTS_STORAGE_KEY = "cliniccare:appointments";
 const PATIENTS_STORAGE_KEY = "cliniccare:patients";
@@ -163,6 +178,11 @@ const Appointments = () => {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEHRDialogOpen, setIsEHRDialogOpen] = useState(false);
   const [isPrescriptionDialogOpen, setIsPrescriptionDialogOpen] = useState(false);
+  const [isFollowUpDialogOpen, setIsFollowUpDialogOpen] = useState(false);
+  const [followUpForm, setFollowUpForm] = useState({
+    followUpDays: "7",
+    reason: "",
+  });
 
   const ehrForm = useForm<EHRFormValues>({
     resolver: zodResolver(ehrSchema),
@@ -237,11 +257,42 @@ const Appointments = () => {
 
   // Update appointment status
   const updateStatus = (id: string, newStatus: AppointmentStatus) => {
+    const appointment = appointments.find((apt) => apt.id === id);
+    if (!appointment) return;
+
     const updated = appointments.map((apt) =>
       apt.id === id ? { ...apt, status: newStatus } : apt
     );
     setAppointments(updated);
     saveAppointments(updated);
+
+    // Create notification for patient
+    try {
+      // Find patient ID
+      const patientId = findPatientId(appointment.patientName, appointment.patientPhone);
+      
+      if (patientId) {
+        if (newStatus === "confirmed") {
+          createAppointmentConfirmedNotification(patientId, {
+            id: appointment.id,
+            doctorName: appointment.doctorName,
+            date: appointment.date,
+            time: appointment.time,
+            specialty: appointment.specialty,
+          });
+        } else if (newStatus === "cancelled") {
+          createAppointmentCancelledNotification(patientId, {
+            id: appointment.id,
+            doctorName: appointment.doctorName,
+            date: appointment.date,
+            time: appointment.time,
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Error creating patient notification:", error);
+    }
+
     toast.success("Cập nhật trạng thái thành công");
   };
 
@@ -280,7 +331,34 @@ const Appointments = () => {
         conclusion: values.conclusion || "",
       };
 
-      await createEHR(ehrRecord);
+      const createdEHR = await createEHR(ehrRecord);
+      
+      // Create interaction
+      createInteraction({
+        patientId: patientId || "UNKNOWN",
+        patientName: selectedAppointment.patientName,
+        doctorId: user.id,
+        type: "ehr",
+        title: `Hồ sơ y tế - ${values.diagnosis}`,
+        description: values.conclusion || "",
+        date: new Date(values.visitDate).toISOString(),
+        metadata: { appointmentId: selectedAppointment.id, diagnosis: values.diagnosis },
+      });
+
+      // Create notification for patient
+      if (patientId) {
+        try {
+          createEHRNotification(patientId, {
+            id: createdEHR.id || `ehr-${Date.now()}`,
+            doctorName: user.name || "Bác sĩ",
+            diagnosis: values.diagnosis,
+            visitDate: values.visitDate,
+          });
+        } catch (error) {
+          console.error("Error creating EHR notification:", error);
+        }
+      }
+      
       toast.success("Tạo hồ sơ bệnh án thành công");
       setIsEHRDialogOpen(false);
       setSelectedAppointment(null);
@@ -288,6 +366,18 @@ const Appointments = () => {
 
       // Update appointment status to completed
       updateStatus(selectedAppointment.id, "completed");
+      
+      // Create interaction for appointment
+      createInteraction({
+        patientId: patientId || "UNKNOWN",
+        patientName: selectedAppointment.patientName,
+        doctorId: user.id,
+        type: "appointment",
+        title: `Lịch khám - ${selectedAppointment.specialty}`,
+        description: `Lịch khám ngày ${selectedAppointment.date} lúc ${selectedAppointment.time}`,
+        date: selectedAppointment.date,
+        metadata: { appointmentId: selectedAppointment.id, status: "completed" },
+      });
     } catch (error) {
       console.error("Error creating EHR:", error);
       toast.error("Có lỗi xảy ra khi tạo hồ sơ bệnh án");
@@ -312,6 +402,28 @@ const Appointments = () => {
     return aptDate.getTime() === todayDate.getTime();
   });
 
+  // Get schedule warnings
+  const getScheduleWarnings = () => {
+    if (!user?.id) return [];
+
+    const warnings: Array<{ date: string; percentage: number }> = [];
+    
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(today);
+      date.setDate(today.getDate() + i);
+      const dateStr = date.toISOString().split("T")[0];
+      
+      if (isScheduleNearlyFull(user.id, dateStr, appointments)) {
+        const utilization = getScheduleUtilization(user.id, dateStr, appointments);
+        warnings.push({ date: dateStr, percentage: utilization.percentage });
+      }
+    }
+
+    return warnings;
+  };
+
+  const scheduleWarnings = getScheduleWarnings();
+
   return (
     <DoctorLayout>
       <div className="space-y-6">
@@ -322,6 +434,37 @@ const Appointments = () => {
             Quản lý và xem lịch hẹn khám của bệnh nhân
           </p>
         </div>
+
+        {/* Schedule Warnings */}
+        {scheduleWarnings.length > 0 && (
+          <Card className="border-orange-200 bg-orange-50">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2 text-orange-900">
+                <AlertCircle className="h-5 w-5" />
+                Cảnh báo: Lịch sắp đầy
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {scheduleWarnings.map((warning) => {
+                  const date = new Date(warning.date);
+                  const dateStr = date.toLocaleDateString("vi-VN", {
+                    weekday: "long",
+                    year: "numeric",
+                    month: "long",
+                    day: "numeric",
+                  });
+                  return (
+                    <div key={warning.date} className="flex items-center justify-between p-2 bg-white rounded">
+                      <span className="text-sm font-medium">{dateStr}</span>
+                      <Badge variant="destructive">{warning.percentage}% đã đặt</Badge>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Filters */}
         <Card className="border-[#E5E7EB]">
@@ -689,8 +832,7 @@ const Appointments = () => {
                   <Button
                     className="bg-[#007BFF] hover:bg-[#0056B3]"
                     onClick={() => {
-                      updateStatus(selectedAppointment.id, "completed");
-                      setIsViewDialogOpen(false);
+                      setIsFollowUpDialogOpen(true);
                     }}
                   >
                     <CheckCircle className="h-4 w-4 mr-2" />
@@ -783,6 +925,116 @@ const Appointments = () => {
                 </DialogFooter>
               </form>
             </Form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Follow-up Reminder Dialog */}
+        <Dialog open={isFollowUpDialogOpen} onOpenChange={setIsFollowUpDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Tạo nhắc tái khám</DialogTitle>
+              <DialogDescription>
+                Tạo nhắc tái khám cho {selectedAppointment?.patientName} sau khi hoàn thành lịch hẹn
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="followUpDays">Số ngày tái khám</Label>
+                <Input
+                  id="followUpDays"
+                  type="number"
+                  value={followUpForm.followUpDays}
+                  onChange={(e) => setFollowUpForm({ ...followUpForm, followUpDays: e.target.value })}
+                  min="1"
+                  placeholder="7"
+                />
+                <p className="text-xs text-[#687280] mt-1">
+                  Bệnh nhân sẽ được nhắc tái khám sau {followUpForm.followUpDays || 7} ngày
+                </p>
+              </div>
+              <div>
+                <Label htmlFor="followUpReason">Lý do tái khám *</Label>
+                <Input
+                  id="followUpReason"
+                  value={followUpForm.reason}
+                  onChange={(e) => setFollowUpForm({ ...followUpForm, reason: e.target.value })}
+                  placeholder="Ví dụ: Kiểm tra sau điều trị, Tái khám định kỳ..."
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsFollowUpDialogOpen(false);
+                  setFollowUpForm({ followUpDays: "7", reason: "" });
+                }}
+              >
+                Bỏ qua
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  if (!selectedAppointment || !user) return;
+                  updateStatus(selectedAppointment.id, "completed");
+                  setIsFollowUpDialogOpen(false);
+                  setIsViewDialogOpen(false);
+                  setFollowUpForm({ followUpDays: "7", reason: "" });
+                }}
+              >
+                Hoàn thành (không tạo nhắc)
+              </Button>
+              <Button
+                className="bg-[#007BFF] hover:bg-[#0056B3]"
+                onClick={() => {
+                  if (!selectedAppointment || !user) return;
+                  
+                  if (!followUpForm.reason.trim()) {
+                    toast.error("Vui lòng nhập lý do tái khám");
+                    return;
+                  }
+
+                  const patientId = findPatientId(
+                    selectedAppointment.patientName,
+                    selectedAppointment.patientPhone
+                  );
+
+                  try {
+                    createFollowUpFromAppointment(
+                      selectedAppointment.id,
+                      patientId || "UNKNOWN",
+                      selectedAppointment.patientName,
+                      user.id,
+                      parseInt(followUpForm.followUpDays) || 7,
+                      followUpForm.reason
+                    );
+
+                    // Create interaction
+                    createInteraction({
+                      patientId: patientId || "UNKNOWN",
+                      patientName: selectedAppointment.patientName,
+                      doctorId: user.id,
+                      type: "followup",
+                      title: `Nhắc tái khám - ${followUpForm.reason}`,
+                      description: `Tái khám sau ${followUpForm.followUpDays} ngày`,
+                      date: new Date().toISOString(),
+                      metadata: { appointmentId: selectedAppointment.id },
+                    });
+
+                    updateStatus(selectedAppointment.id, "completed");
+                    toast.success("Đã hoàn thành lịch hẹn và tạo nhắc tái khám");
+                    setIsFollowUpDialogOpen(false);
+                    setIsViewDialogOpen(false);
+                    setFollowUpForm({ followUpDays: "7", reason: "" });
+                  } catch (error) {
+                    console.error("Error creating follow-up:", error);
+                    toast.error("Có lỗi xảy ra khi tạo nhắc tái khám");
+                  }
+                }}
+              >
+                Hoàn thành & Tạo nhắc
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

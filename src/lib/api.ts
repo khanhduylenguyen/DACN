@@ -43,7 +43,8 @@ export async function uploadAttachment(patientId: string, file: File): Promise<U
 
 export async function createEHR(record: EHRRecord): Promise<{ id: string } & EHRRecord> {
   try {
-    return await apiFetch<{ id: string } & EHRRecord>(`/patients/${record.patientId}/ehr`, {
+    // Use backend EHR endpoint (server exposes POST /api/ehr)
+    return await apiFetch<{ id: string } & EHRRecord>(`/ehr`, {
       method: "POST",
       body: JSON.stringify(record),
     });
@@ -60,9 +61,140 @@ export async function createEHR(record: EHRRecord): Promise<{ id: string } & EHR
 
 export async function listEHR(patientId: string): Promise<Array<{ id: string } & EHRRecord>> {
   try {
-    return await apiFetch<Array<{ id: string } & EHRRecord>>(`/patients/${patientId}/ehr`, { method: "GET" });
+    // Prefer patient-specific endpoint exposed by backend: GET /api/ehr/patient/:patientId
+    return await apiFetch<Array<{ id: string } & EHRRecord>>(`/ehr/patient/${patientId}`, { method: "GET" });
   } catch {
     const key = `cliniccare:ehr:${patientId}`;
     return JSON.parse(localStorage.getItem(key) || "[]");
+  }
+}
+
+// Prescription types
+export type PrescriptionDrug = {
+  name: string;
+  dose: string;
+  quantity?: string;
+  instructions?: string;
+};
+
+export type Prescription = {
+  _id?: string;
+  patientId: string;
+  patientName: string;
+  doctorId: string;
+  doctorName: string;
+  date: string;
+  drugs: PrescriptionDrug[];
+  diagnosis?: string;
+  notes?: string;
+  status?: "active" | "completed" | "cancelled";
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export async function createPrescription(prescription: Omit<Prescription, "_id" | "createdAt" | "updatedAt">): Promise<Prescription> {
+  try {
+    return await apiFetch<Prescription>("/prescriptions", {
+      method: "POST",
+      body: JSON.stringify(prescription),
+    });
+  } catch (e) {
+    console.error("API call failed, using localStorage fallback:", e);
+    // Fallback to localStorage
+    const key = "cliniccare:prescriptions";
+    const allPrescriptions = JSON.parse(localStorage.getItem(key) || "[]");
+    const newPrescription = {
+      _id: `PRESCRIPTION_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      ...prescription,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    allPrescriptions.push(newPrescription);
+    localStorage.setItem(key, JSON.stringify(allPrescriptions));
+    window.dispatchEvent(new Event("prescriptionsUpdated"));
+    return newPrescription;
+  }
+}
+
+export async function listPrescriptions(params?: { patientId?: string; doctorId?: string; status?: string }): Promise<Prescription[]> {
+  try {
+    const query = params ? new URLSearchParams(params).toString() : "";
+    const url = `/prescriptions${query ? `?${query}` : ""}`;
+    // API may return either the raw array or an envelope { success: true, data: [...] }.
+    const resp = await apiFetch<any>(url, { method: "GET" });
+    if (!resp) return [];
+    if (Array.isArray(resp)) return resp as Prescription[];
+    if (resp.data && Array.isArray(resp.data)) return resp.data as Prescription[];
+    // Try common envelope shapes
+    if (resp.success && Array.isArray(resp.data)) return resp.data as Prescription[];
+    // Fallback: attempt to coerce object values to array
+    return Array.isArray(resp) ? (resp as Prescription[]) : [];
+  } catch (e) {
+    console.error("API call failed, using localStorage fallback:", e);
+    // Fallback to localStorage
+    const key = "cliniccare:prescriptions";
+    const allPrescriptions: Prescription[] = JSON.parse(localStorage.getItem(key) || "[]");
+
+    let filtered = allPrescriptions;
+    if (params?.patientId) {
+      filtered = filtered.filter(p => p.patientId === params.patientId);
+    }
+    if (params?.doctorId) {
+      filtered = filtered.filter(p => p.doctorId === params.doctorId);
+    }
+    if (params?.status) {
+      filtered = filtered.filter(p => p.status === params.status);
+    }
+
+    return filtered.sort((a, b) => new Date(b.createdAt || b.date).getTime() - new Date(a.createdAt || a.date).getTime());
+  }
+}
+
+export async function getPrescription(id: string): Promise<Prescription> {
+  try {
+    return await apiFetch<Prescription>(`/prescriptions/${id}`, { method: "GET" });
+  } catch (e) {
+    console.error("API call failed, using localStorage fallback:", e);
+    // Fallback to localStorage
+    const key = "cliniccare:prescriptions";
+    const allPrescriptions: Prescription[] = JSON.parse(localStorage.getItem(key) || "[]");
+    const prescription = allPrescriptions.find(p => p._id === id);
+    if (!prescription) throw new Error("Prescription not found");
+    return prescription;
+  }
+}
+
+export async function updatePrescription(id: string, updates: Partial<Prescription>): Promise<Prescription> {
+  try {
+    return await apiFetch<Prescription>(`/prescriptions/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(updates),
+    });
+  } catch (e) {
+    console.error("API call failed, using localStorage fallback:", e);
+    // Fallback to localStorage
+    const key = "cliniccare:prescriptions";
+    const allPrescriptions: Prescription[] = JSON.parse(localStorage.getItem(key) || "[]");
+    const index = allPrescriptions.findIndex(p => p._id === id);
+    if (index === -1) throw new Error("Prescription not found");
+
+    allPrescriptions[index] = { ...allPrescriptions[index], ...updates, updatedAt: new Date().toISOString() };
+    localStorage.setItem(key, JSON.stringify(allPrescriptions));
+    window.dispatchEvent(new Event("prescriptionsUpdated"));
+    return allPrescriptions[index];
+  }
+}
+
+export async function deletePrescription(id: string): Promise<void> {
+  try {
+    await apiFetch(`/prescriptions/${id}`, { method: "DELETE" });
+  } catch (e) {
+    console.error("API call failed, using localStorage fallback:", e);
+    // Fallback to localStorage
+    const key = "cliniccare:prescriptions";
+    const allPrescriptions: Prescription[] = JSON.parse(localStorage.getItem(key) || "[]");
+    const filtered = allPrescriptions.filter(p => p._id !== id);
+    localStorage.setItem(key, JSON.stringify(filtered));
+    window.dispatchEvent(new Event("prescriptionsUpdated"));
   }
 }

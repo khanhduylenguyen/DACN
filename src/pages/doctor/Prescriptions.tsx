@@ -41,32 +41,13 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { createSchedulesFromPrescription } from "@/lib/medication-schedule";
+import { createInteraction } from "@/lib/patient-followup";
+import { createPrescriptionNotification as createPatientPrescriptionNotification } from "@/lib/patient-notifications";
+import { createPrescription, listPrescriptions, updatePrescription, deletePrescription, type Prescription, type PrescriptionDrug } from "@/lib/api";
 import { toast } from "sonner";
 
-const PRESCRIPTIONS_STORAGE_KEY = "cliniccare:prescriptions";
 const PATIENTS_STORAGE_KEY = "cliniccare:patients";
 const APPOINTMENTS_STORAGE_KEY = "cliniccare:appointments";
-
-interface PrescriptionDrug {
-  name: string;
-  dose: string;
-  quantity?: string;
-  instructions?: string;
-}
-
-interface Prescription {
-  id: string;
-  patientId: string;
-  patientName: string;
-  doctorId: string;
-  doctorName: string;
-  date: string; // ISO date string
-  drugs: PrescriptionDrug[];
-  diagnosis?: string;
-  notes?: string;
-  status?: "active" | "completed" | "cancelled";
-  createdAt: string;
-}
 
 interface Patient {
   id: string;
@@ -80,37 +61,6 @@ interface Appointment {
   patientPhone: string;
   patientId?: string;
 }
-
-// Load prescriptions from localStorage
-const loadPrescriptions = (doctorId: string): Prescription[] => {
-  try {
-    const stored = localStorage.getItem(PRESCRIPTIONS_STORAGE_KEY);
-    if (stored) {
-      const allPrescriptions: Prescription[] = JSON.parse(stored);
-      return allPrescriptions.filter((p) => p.doctorId === doctorId);
-    }
-  } catch {}
-  return [];
-};
-
-// Save prescriptions to localStorage
-const savePrescriptions = (prescriptions: Prescription[]) => {
-  try {
-    localStorage.setItem(PRESCRIPTIONS_STORAGE_KEY, JSON.stringify(prescriptions));
-    window.dispatchEvent(new Event("prescriptionsUpdated"));
-  } catch {}
-};
-
-// Load all prescriptions
-const loadAllPrescriptions = (): Prescription[] => {
-  try {
-    const stored = localStorage.getItem(PRESCRIPTIONS_STORAGE_KEY);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-  } catch {}
-  return [];
-};
 
 // Load patients
 const loadPatients = (): Patient[] => {
@@ -216,24 +166,19 @@ const Prescriptions = () => {
       return;
     }
 
-    const loadData = () => {
+    const loadData = async () => {
       if (isLoadingRef.current) return;
 
       isLoadingRef.current = true;
       setIsLoading(true);
 
       try {
-        const doctorPrescriptions = loadPrescriptions(user.id);
-        // Sort by date (newest first)
-        const sorted = doctorPrescriptions.sort((a, b) => {
-          const dateA = new Date(a.date).getTime();
-          const dateB = new Date(b.date).getTime();
-          return dateB - dateA;
-        });
-        setPrescriptions(sorted);
+        const doctorPrescriptions = await listPrescriptions({ doctorId: user.id });
+        setPrescriptions(doctorPrescriptions);
       } catch (error) {
         console.error("Error loading prescriptions:", error);
         setPrescriptions([]);
+        toast.error("Không thể tải danh sách toa thuốc");
       } finally {
         setIsLoading(false);
         isLoadingRef.current = false;
@@ -241,18 +186,6 @@ const Prescriptions = () => {
     };
 
     loadData();
-
-    const handlePrescriptionUpdate = () => {
-      if (!isLoadingRef.current) {
-        loadData();
-      }
-    };
-
-    window.addEventListener("prescriptionsUpdated", handlePrescriptionUpdate);
-
-    return () => {
-      window.removeEventListener("prescriptionsUpdated", handlePrescriptionUpdate);
-    };
   }, [user?.id]);
 
   // Filter prescriptions
@@ -297,12 +230,16 @@ const Prescriptions = () => {
     setIsViewDialogOpen(true);
   };
 
-  const handleDelete = (prescription: Prescription) => {
+  const handleDelete = async (prescription: Prescription) => {
     if (confirm("Bạn có chắc chắn muốn xóa toa thuốc này?")) {
-      const allPrescriptions = loadAllPrescriptions();
-      const updated = allPrescriptions.filter((p) => p.id !== prescription.id);
-      savePrescriptions(updated);
-      setPrescriptions(updated.filter((p) => p.doctorId === user?.id));
+      try {
+        await deletePrescription(prescription._id!);
+        setPrescriptions(prev => prev.filter(p => p._id !== prescription._id));
+        toast.success("Đã xóa toa thuốc");
+      } catch (error) {
+        console.error("Error deleting prescription:", error);
+        toast.error("Không thể xóa toa thuốc");
+      }
     }
   };
 
@@ -328,7 +265,7 @@ const Prescriptions = () => {
     setDrugs(updated);
   };
 
-  const onSubmit = (data: PrescriptionFormValues) => {
+  const onSubmit = async (data: PrescriptionFormValues) => {
     if (!user) return;
 
     if (drugs.length === 0) {
@@ -344,65 +281,87 @@ const Prescriptions = () => {
     }
 
     const patientId = findPatientId(data.patientName);
-    const allPrescriptions = loadAllPrescriptions();
 
-    if (isEditDialogOpen && selectedPrescription) {
-      // Update existing prescription
-      const updated = allPrescriptions.map((p) => {
-        if (p.id === selectedPrescription.id) {
-          return {
-            ...p,
-            patientName: data.patientName,
-            patientId: patientId || p.patientId,
-            drugs: drugs,
-            diagnosis: data.diagnosis,
-            notes: data.notes,
-            date: new Date().toISOString(),
-          };
+    try {
+      if (isEditDialogOpen && selectedPrescription) {
+        // Update existing prescription
+        const updatedPrescription = await updatePrescription(selectedPrescription._id!, {
+          patientName: data.patientName,
+          patientId: patientId || selectedPrescription.patientId,
+          drugs: drugs,
+          diagnosis: data.diagnosis,
+          notes: data.notes,
+          date: new Date().toISOString(),
+        });
+
+        setPrescriptions(prev => prev.map(p => p._id === selectedPrescription._id ? updatedPrescription : p));
+        setIsEditDialogOpen(false);
+        setSelectedPrescription(null);
+        toast.success("Đã cập nhật toa thuốc");
+      } else {
+        // Create new prescription
+        const newPrescription = await createPrescription({
+          patientId: patientId || "",
+          patientName: data.patientName,
+          doctorId: user.id,
+          doctorName: user.name || "Bác sĩ",
+          date: new Date().toISOString(),
+          drugs: drugs,
+          diagnosis: data.diagnosis,
+          notes: data.notes,
+          status: "active",
+        });
+
+        setPrescriptions(prev => [newPrescription, ...prev]);
+
+        // Create interaction
+        createInteraction({
+          patientId: patientId || "UNKNOWN",
+          patientName: data.patientName,
+          doctorId: user.id,
+          type: "prescription",
+          title: `Đơn thuốc - ${data.diagnosis || "Không có chẩn đoán"}`,
+          description: `${drugs.length} loại thuốc: ${drugs.map((d) => d.name).join(", ")}`,
+          date: new Date().toISOString(),
+          metadata: { prescriptionId: newPrescription._id, diagnosis: data.diagnosis },
+        });
+
+        // Create notification for patient
+        if (patientId) {
+          try {
+            createPatientPrescriptionNotification(patientId, {
+              id: newPrescription._id!,
+              doctorName: user.name || "Bác sĩ",
+              diagnosis: data.diagnosis,
+            });
+          } catch (error) {
+            console.error("Error creating prescription notification:", error);
+          }
         }
-        return p;
-      });
-      savePrescriptions(updated);
-      setIsEditDialogOpen(false);
-      setSelectedPrescription(null);
-    } else {
-      // Create new prescription
-      const newPrescription: Prescription = {
-        id: `PRESCRIPTION_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        patientId: patientId || "",
-        patientName: data.patientName,
-        doctorId: user.id,
-        doctorName: user.name || "Bác sĩ",
-        date: new Date().toISOString(),
-        drugs: drugs,
-        diagnosis: data.diagnosis,
-        notes: data.notes,
-        status: "active",
-        createdAt: new Date().toISOString(),
-      };
 
-      allPrescriptions.push(newPrescription);
-      savePrescriptions(allPrescriptions);
-      
-      // Tự động tạo lịch uống thuốc
-      if (patientId) {
-        try {
-          const schedules = createSchedulesFromPrescription(
-            newPrescription.id,
-            patientId,
-            drugs,
-            new Date().toISOString().split("T")[0]
-          );
-          toast.success(`Đã tạo đơn thuốc và ${schedules.length} lịch uống thuốc`);
-        } catch (error) {
-          console.error("Error creating medication schedules:", error);
+        // Tự động tạo lịch uống thuốc
+        if (patientId) {
+          try {
+            const schedules = createSchedulesFromPrescription(
+              newPrescription._id!,
+              patientId,
+              drugs,
+              new Date().toISOString().split("T")[0]
+            );
+            toast.success(`Đã tạo đơn thuốc và ${schedules.length} lịch uống thuốc`);
+          } catch (error) {
+            console.error("Error creating medication schedules:", error);
+            toast.success("Đã tạo đơn thuốc");
+          }
+        } else {
           toast.success("Đã tạo đơn thuốc");
         }
-      } else {
-        toast.success("Đã tạo đơn thuốc");
+
+        setIsCreateDialogOpen(false);
       }
-      
-      setIsCreateDialogOpen(false);
+    } catch (error) {
+      console.error("Error saving prescription:", error);
+      toast.error("Không thể lưu toa thuốc");
     }
 
     setDrugs([]);
