@@ -313,7 +313,7 @@ export function getTrendData(
 
     // Process diagnoses from prescriptions and EHR
     [...doctorPrescriptions, ...doctorEHRRecords].forEach((item) => {
-      const itemDate = new Date(item.date || (item as any).visitDate);
+      const itemDate = new Date((item as Prescription).date || (item as EHRRecord).visitDate);
       if (itemDate < start || itemDate > now) return;
 
       let periodKey: string;
