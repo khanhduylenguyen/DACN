@@ -1,6 +1,11 @@
 /**
  * Service quản lý kết quả xét nghiệm
  * Lưu trữ PDF/ảnh và metadata của kết quả xét nghiệm
+ *
+ * Từ phiên bản AWS S3:
+ *  - File KHÔNG còn lưu base64 trong localStorage (gây quota limit + chậm).
+ *  - File được upload lên AWS S3 qua /api/uploads/file, backend trả { key, viewUrl }.
+ *  - URL có hạn 1h, client sẽ refresh qua refreshSignedUrl() khi cần.
  */
 
 export interface LabResult {
@@ -20,9 +25,14 @@ export interface LabFile {
   id: string;
   name: string;
   type: "pdf" | "image"; // Loại file
-  url: string; // Base64 data URL hoặc blob URL
+  /** S3 object key. Khi đã hết hạn URL thì gọi refreshSignedUrl(key) để có link mới. */
+  key?: string;
+  /** Presigned URL hiện tại (hết hạn sau ~1h). Có thể tạo lại bằng refreshSignedUrl. */
+  url: string; // Có thể là presigned URL (S3) hoặc blob URL fallback
   size: number; // Kích thước file (bytes)
   uploadedAt: string; // Ngày upload
+  /** Cờ backend đã lưu lên S3 hay chưa (false → fallback blob URL, chỉ xem được trong session). */
+  s3Uploaded?: boolean;
 }
 
 const STORAGE_KEY = "cliniccare:lab-results";
@@ -48,20 +58,22 @@ async function syncFromServer(patientId: string) {
     if (!Array.isArray(serverList)) return;
 
     // Map server items to LabResult shape
-    const mapped: LabResult[] = serverList.map((s: any) => ({
+    const mapped: LabResult[] = serverList.map((s: { _id?: string; id?: string; patientId: string; testName: string; testDate: string | Date; facility?: string; doctor?: string; files?: Array<{ id?: string; name: string; type: "pdf" | "image"; url: string; key?: string; size: number; uploadedAt?: string | Date }>; notes?: string; createdAt?: string; updatedAt?: string }) => ({
       id: s._id || s.id || `lab_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       patientId: s.patientId,
       testName: s.testName,
       testDate: new Date(s.testDate).toISOString(),
       facility: s.facility,
       doctor: s.doctor,
-      files: (s.files || []).map((f: any) => ({
+      files: (s.files || []).map((f: { id?: string; name: string; type: "pdf" | "image"; url: string; key?: string; size: number; uploadedAt?: string | Date }) => ({
         id: f.id || `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         name: f.name,
         type: f.type,
         url: f.url,
+        key: f.key,
         size: f.size,
-        uploadedAt: new Date(f.uploadedAt || f.uploadedAt).toISOString(),
+        uploadedAt: new Date(f.uploadedAt || new Date()).toISOString(),
+        s3Uploaded: Boolean(f.key),
       })),
       notes: s.notes,
       createdAt: s.createdAt || new Date().toISOString(),

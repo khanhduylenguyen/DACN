@@ -46,6 +46,7 @@ import notificationRoutes from "./routes/notifications.js";
 import staffRoutes from "./routes/staff.js";
 import patientRoutes from "./routes/patients.js";
 import labResultsRoutes from "./routes/labResults.js";
+import uploadRoutes from "./routes/uploads.js";
 
 // API Routes
 app.use("/api/auth", authRoutes);
@@ -57,6 +58,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/staff", staffRoutes);
 app.use("/api/patients", patientRoutes);
 app.use("/api/lab-results", labResultsRoutes);
+app.use("/api/uploads", uploadRoutes);
 
 // Health check
 app.get("/api/health", (req, res) => {

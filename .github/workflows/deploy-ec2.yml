@@ -1,0 +1,147 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-southeast-1
+  EC2_HOST: ${{ secrets.EC2_HOST }}
+  EC2_USER: ec2-user
+  EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+  S3_BUCKET: ${{ secrets.S3_BUCKET_FRONTEND }}
+
+jobs:
+  # ============================================
+  # Deploy Backend to EC2
+  # ============================================
+  deploy-backend:
+    name: Deploy Backend to EC2
+    runs-on: ubuntu-latest
+    environment: Production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd server && npm ci
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            cd /var/www/medi-path
+            
+            # Pull latest code
+            git pull origin main
+            
+            # Install dependencies
+            npm ci
+            
+            # Restart PM2
+            pm2 restart medi-path-backend --update-env
+            
+            # Show status
+            pm2 status
+
+  # ============================================
+  # Deploy Frontend to S3
+  # ============================================
+  deploy-frontend:
+    name: Deploy Frontend to S3
+    runs-on: ubuntu-latest
+    needs: deploy-backend
+    environment: Production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload to S3
+        run: |
+          aws s3 sync ./dist s3://${{ env.S3_BUCKET }}/ --delete \
+            --cache-control "public,max-age=31536000,immutable" \
+            --exclude "index.html" \
+            --exclude "*.css"
+          
+          aws s3 cp ./dist/index.html s3://${{ env.S3_BUCKET }}/index.html \
+            --cache-control "public,max-age=0,must-revalidate" \
+            --content-type "text/html"
+
+      - name: Invalidate CloudFront
+        if: secrets.CF_DISTRIBUTION_ID != ''
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CF_DISTRIBUTION_ID }} \
+            --paths "/*"
+
+  # ============================================
+  # Health Check
+  # ============================================
+  health-check:
+    name: Health Check
+    runs-on: ubuntu-latest
+    needs: deploy-frontend
+    environment: Production
+
+    steps:
+      - name: Check API Health
+        run: |
+          echo "Waiting 10 seconds for deployment to stabilize..."
+          sleep 10
+          
+          response=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.API_URL }}/api/health)
+          
+          if [ "$response" = "200" ]; then
+            echo "✅ API Health Check: PASSED"
+          else
+            echo "❌ API Health Check: FAILED (HTTP $response)"
+            exit 1
+          fi
+
+      - name: Deployment Summary
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend Deployment | ✅ Complete |" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend Deployment | ✅ Complete |" >> $GITHUB_STEP_SUMMARY
+          echo "| Health Check | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployed at:** $(date)" >> $GITHUB_STEP_SUMMARY

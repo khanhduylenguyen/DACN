@@ -1,0 +1,137 @@
+# ============================================
+# Docker Compose - Local Development
+# ============================================
+# Usage:
+#   docker-compose up -d          (start all services)
+#   docker-compose logs -f       (view logs)
+#   docker-compose down          (stop all services)
+#   docker-compose down -v       (stop + remove volumes)
+
+services:
+  # ============================================
+  # MongoDB Database
+  # ============================================
+  mongodb:
+    image: mongo:7
+    container_name: medi-path-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-mediadmin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-mediadmin123}
+      MONGO_INITDB_DATABASE: medi-path-ease
+    ports:
+      - "${MONGODB_PORT:-27017}:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - medi-path-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ============================================
+  # Backend API
+  # ============================================
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+      target: runner
+    container_name: medi-path-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: ${PORT:-3001}
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-mediadmin}:${MONGO_ROOT_PASSWORD:-mediadmin123}@mongodb:27017/${MONGODB_DATABASE:-medi-path-ease}?authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      # AWS S3 (optional - for local, set to dummy values)
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-local}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-local}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-medi-path-ease-uploads}
+      # Email (optional - for local, set to dummy values)
+      EMAILJS_SERVICE_ID: ${EMAILJS_SERVICE_ID:-service_dev}
+      EMAILJS_TEMPLATE_ID: ${EMAILJS_TEMPLATE_ID:-template_dev}
+      EMAILJS_PUBLIC_KEY: ${EMAILJS_PUBLIC_KEY:-public_dev}
+      # Frontend URL for CORS
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+    ports:
+      - "${PORT:-3001}:3001"
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - medi-path-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ============================================
+  # Frontend (Development with Vite)
+  # ============================================
+  frontend:
+    image: node:20-alpine
+    container_name: medi-path-frontend
+    restart: unless-stopped
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host"
+    environment:
+      VITE_API_URL: http://localhost:3001
+      VITE_API_BASE_URL: /api
+    ports:
+      - "${VITE_PORT:-5173}:5173"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/dist
+    depends_on:
+      - backend
+    networks:
+      - medi-path-network
+
+  # ============================================
+  # Redis (Optional - for caching)
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: medi-path-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - medi-path-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  medi-path-network:
+    driver: bridge
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  mongodb_data:
+    driver: local
+  redis_data:
+    driver: local

@@ -8,6 +8,10 @@ const labFileSchema = new mongoose.Schema(
     name: { type: String, required: true },
     type: { type: String, enum: ["pdf", "image"], required: true },
     url: { type: String, required: true },
+    /** S3 object key (vd: uploads/lab-results/<patientId>/2026/07/<uuid>-file.pdf) */
+    key: { type: String },
+    /** Presigned URL hết hạn lúc nào (ISO) - optional, frontend tự refresh */
+    urlExpiresAt: { type: Date },
     size: { type: Number, required: true },
     uploadedAt: { type: Date, default: Date.now },
   },

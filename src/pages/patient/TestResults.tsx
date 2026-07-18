@@ -65,6 +65,8 @@ import {
   Area,
 } from "recharts";
 import { getCurrentUser, AUTH_EVENT } from "@/lib/auth";
+import { useS3Upload } from "@/lib/useS3Upload";
+import { refreshSignedUrl } from "@/lib/upload";
 import {
   getLabResults,
   saveLabResult,
@@ -104,11 +106,17 @@ const TestResults = () => {
     doctor: "",
     notes: "",
   });
-  const [uploadedFiles, setUploadedFiles] = useState<Array<{ file: File; preview: string }>>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<Array<{ file: File; preview: string; uploaded?: boolean; key?: string }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+
+  // S3 upload hook - tự động đẩy file lên AWS S3 qua backend.
+  const { upload, isUploading: isS3Uploading, errors: s3Errors, uploads: s3Uploads } = useS3Upload({
+    folder: "lab-results",
+    patientId: currentUser?.id,
+  });
 
   // Load results
   const loadResults = useCallback(() => {
@@ -206,19 +214,48 @@ const TestResults = () => {
     }
   };
 
-  // Process files (validation and preview)
-  const processFiles = (files: File[]) => {
-    files.forEach((file) => {
+  // Process files (validation + upload lên S3 qua backend)
+  const processFiles = async (files: File[]) => {
+    const validFiles: File[] = [];
+    for (const file of files) {
       const validation = validateLabFile(file);
       if (!validation.valid) {
-        toast.error(validation.error);
-        return;
+        toast.error(validation.error || `File không hợp lệ: ${file.name}`);
+        continue;
       }
-      
-      fileToDataURL(file).then((preview) => {
-        setUploadedFiles((prev) => [...prev, { file, preview }]);
-      });
-    });
+      validFiles.push(file);
+    }
+    if (validFiles.length === 0) return;
+
+    // 1) Tạo preview URL (blob) cho UI hiển thị NGAY trong khi upload
+    const newEntries = await Promise.all(
+      validFiles.map(async (file) => {
+        const preview = file.type.startsWith("image/") ? URL.createObjectURL(file) : "";
+        return { file, preview, uploaded: false };
+      })
+    );
+    setUploadedFiles((prev) => [...prev, ...newEntries]);
+
+    // 2) Upload song song (giới hạn concurrency trong hook) - đẩy lên S3
+    for (const entry of newEntries) {
+      try {
+        const up = await upload(entry.file);
+        if (up.key) {
+          // Cập nhật entry với key + url thật (S3 presigned)
+          setUploadedFiles((prev) =>
+            prev.map((e) =>
+              e === entry ? { ...e, preview: up.url, uploaded: true, key: up.key } : e
+            )
+          );
+          if (up.error) {
+            toast.warning(`Upload lỗi (đã dùng fallback): ${up.error}`);
+          }
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error(`Không upload được ${entry.file.name}: ${msg}`);
+      }
+    }
   };
 
   // Handle drag and drop
@@ -261,24 +298,27 @@ const TestResults = () => {
       toast.error("Vui lòng chọn ít nhất một file");
       return;
     }
+
+    // Nếu S3 còn đang upload, đợi xong trước khi save
+    if (isS3Uploading || (s3Uploads || []).some((u) => u.status === "uploading")) {
+      toast.info("Đang upload lên AWS S3, vui lòng đợi...");
+      return;
+    }
     
     setIsSubmitting(true);
     
     try {
-      // Convert files to LabFile format
-      const labFiles: LabFile[] = await Promise.all(
-        uploadedFiles.map(async ({ file, preview }) => {
-          const dataURL = preview;
-          return {
-            id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            name: file.name,
-            type: file.type === "application/pdf" ? "pdf" : "image",
-            url: dataURL,
-            size: file.size,
-            uploadedAt: new Date().toISOString(),
-          };
-        })
-      );
+      // Chuyển file UI → LabFile (giữ S3 key & presigned URL)
+      const labFiles: LabFile[] = uploadedFiles.map(({ file, preview, key, uploaded }) => ({
+        id: `file_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        name: file.name,
+        type: file.type === "application/pdf" ? "pdf" : "image",
+        url: preview,
+        key,
+        size: file.size,
+        uploadedAt: new Date().toISOString(),
+        s3Uploaded: Boolean(uploaded && key),
+      }));
       
       // Save result
       saveLabResult({
@@ -411,6 +451,28 @@ const TestResults = () => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  /**
+   * Làm mới URL khi file đã load qua S3 mà presigned URL hết hạn (sau 1h).
+   * Gọi khi user bấm "Xem" hoặc khi <img>/<iframe> lỗi load.
+   */
+  const getViewableUrl = async (file: LabFile): Promise<string> => {
+    if (!file.key) return file.url;
+    try {
+      const fresh = await refreshSignedUrl(file.key, 3600);
+      return fresh;
+    } catch {
+      return file.url;
+    }
+  };
+
+  /**
+   * Handler "Xem" - mở file (đã refresh URL nếu cần).
+   */
+  const handleViewFile = async (file: LabFile) => {
+    const url = await getViewableUrl(file);
+    window.open(url, "_blank");
   };
 
   if (isLoading) {
@@ -1015,13 +1077,24 @@ const TestResults = () => {
                                 </div>
                               )}
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-gray-900 truncate mb-1">
-                                  {item.file.name}
-                                </p>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <p className="text-sm font-medium text-gray-900 truncate">
+                                    {item.file.name}
+                                  </p>
+                                  {item.uploaded ? (
+                                    <Badge variant="outline" className="text-[10px] bg-green-50 text-green-700 border-green-300">
+                                      S3 ✓
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-300">
+                                      Đang upload...
+                                    </Badge>
+                                  )}
+                                </div>
                                 <p className="text-xs text-[#687280] mb-2">
                                   {formatFileSize(item.file.size)}
                                 </p>
-                                {item.file.type !== "application/pdf" && (
+                                {item.file.type !== "application/pdf" && item.preview && (
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -1069,10 +1142,16 @@ const TestResults = () => {
               </Button>
               <Button
                 onClick={handleUpload}
-                disabled={isSubmitting}
+                disabled={isSubmitting || isS3Uploading || uploadedFiles.some((f) => !f.uploaded)}
                 className="bg-[#007BFF] hover:bg-[#0056B3]"
               >
-                {isSubmitting ? "Đang lưu..." : "Lưu"}
+                {isSubmitting
+                  ? "Đang lưu..."
+                  : isS3Uploading
+                  ? "Đang upload lên S3..."
+                  : uploadedFiles.some((f) => !f.uploaded)
+                  ? "Đợi upload xong..."
+                  : "Lưu"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1132,10 +1211,13 @@ const TestResults = () => {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => {
+                                onClick={async () => {
+                                  // Tải về - nếu là S3 thì mở presigned URL
+                                  const url = await getViewableUrl(file);
                                   const link = document.createElement("a");
-                                  link.href = file.url;
+                                  link.href = url;
                                   link.download = file.name;
+                                  link.target = "_blank";
                                   link.click();
                                 }}
                               >
@@ -1150,13 +1232,23 @@ const TestResults = () => {
                                 src={file.url}
                                 className="w-full h-64 border rounded"
                                 title={file.name}
+                                onError={async (e) => {
+                                  const target = e.currentTarget;
+                                  const fresh = await getViewableUrl(file);
+                                  if (target.src !== fresh) target.src = fresh;
+                                }}
                               />
                             ) : (
                               <img
                                 src={file.url}
                                 alt={file.name}
                                 className="w-full h-auto rounded border cursor-pointer hover:opacity-90 transition-opacity"
-                                onClick={() => window.open(file.url, "_blank")}
+                                onClick={() => handleViewFile(file)}
+                                onError={async (e) => {
+                                  const target = e.currentTarget;
+                                  const fresh = await getViewableUrl(file);
+                                  if (target.src !== fresh) target.src = fresh;
+                                }}
                               />
                             )}
                           </CardContent>
